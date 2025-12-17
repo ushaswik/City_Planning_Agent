@@ -56,6 +56,19 @@ python run_pipeline.py --init
 python run_pipeline.py
 ```
 
+## Frontend (Web UI)
+
+This repo includes a simple Streamlit dashboard to:
+- initialize/seed the SQLite database
+- run the full pipeline or individual stages
+- browse issues → candidates → decisions → schedule tables
+
+```bash
+pip install -r requirements.txt
+export OPENAI_API_KEY='your-api-key-here'   # required to run agents
+streamlit run frontend/streamlit_app.py
+```
+
 ## Project Structure
 
 ```
