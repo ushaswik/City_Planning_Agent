@@ -56,6 +56,24 @@ python run_pipeline.py --init
 python run_pipeline.py
 ```
 
+## Frontend
+
+A simple React + Vite single-page app lives in `frontend/` and provides a dashboard, agents list, and pipeline views.
+
+Quick start (development):
+
+```bash
+# Start backend
+uvicorn backend.app.main:app --reload --port 8000
+
+# In another terminal, start frontend
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
 ## Project Structure
 
 ```

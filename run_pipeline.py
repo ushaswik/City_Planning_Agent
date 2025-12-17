@@ -8,10 +8,11 @@ This script demonstrates the complete 3-agent pipeline:
 3. Scheduling Agent: Resource-Constrained Scheduling
 
 Usage:
-    python run_pipeline.py [--init] [--stage STAGE]
+    python run_pipeline.py [--init] [--stage STAGE] [--budget BUDGET]
     
     --init      Initialize database with sample data
     --stage     Run specific stage: formation, governance, scheduling
+    --budget    Quarterly budget in USD (default: 75000000)
 """
 
 import asyncio
@@ -40,12 +41,26 @@ async def main():
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    # Parse simple command line args
+    # Parse command line args
     args = sys.argv[1:]
     
     if "--help" in args or "-h" in args:
         print(__doc__)
         return
+    
+    # Parse budget argument
+    budget = None
+    if "--budget" in args:
+        idx = args.index("--budget")
+        if idx + 1 < len(args):
+            try:
+                budget = float(args[idx + 1].replace(',', '').replace('$', ''))
+            except ValueError:
+                print("Error: --budget must be a number")
+                return
+        else:
+            print("Error: --budget requires a value")
+            return
     
     # Initialize database
     if "--init" in args or not os.path.exists(DB_PATH):
@@ -53,8 +68,11 @@ async def main():
         init_database()
         seed_sample_data()
     
-    # Create context
-    context = MunicipalContext()
+    # Create context with budget (if provided)
+    if budget is not None:
+        context = MunicipalContext(quarterly_budget=budget)
+    else:
+        context = MunicipalContext()
     
     # Show current state
     summary = context.get_system_summary()
@@ -87,17 +105,20 @@ System State:
         try:
             results = await run_municipal_pipeline(context, reset_data=True, verbose=True)
             
-            # Final summary
+            # Final summary - formatted as requested
             print("\n" + "=" * 60)
             print("EXECUTION COMPLETE")
             print("=" * 60)
             print(f"""
-Final Results:
-  Projects Formed: {results['summary']['project_candidates']}
-  Projects Approved: {results['summary']['approved_projects']}
-  Tasks Scheduled: {results['summary']['scheduled_tasks']}
-  Budget Allocated: ${results['summary']['total_allocated']:,.0f}
-  Budget Remaining: ${context.quarterly_budget - results['summary']['total_allocated']:,.0f}
+Projects formed: {results['summary']['project_candidates']}
+
+Projects approved: {results['summary']['approved_projects']}
+
+Tasks scheduled: {results['summary']['scheduled_tasks']}
+
+Total budget allocated: ${results['summary']['total_allocated']:,.0f}
+
+Budget remaining: ${context.quarterly_budget - results['summary']['total_allocated']:,.0f}
             """)
             
         except Exception as e:

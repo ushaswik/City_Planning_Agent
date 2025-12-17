@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
 Agent 3: Scheduling Agent (ILP/CP-SAT Optimization)
 
