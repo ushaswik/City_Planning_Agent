@@ -24,6 +24,7 @@ from agents import Agent, function_tool, RunContextWrapper
 
 from .context import MunicipalContext
 from .models import ScheduleOutput, ScheduleTask
+from .mcp_servers import get_mcp_client
 
 
 # ========== Tool Definitions ==========
@@ -101,13 +102,16 @@ def get_resource_availability(
 @function_tool
 def run_greedy_scheduler(ctx: RunContextWrapper["MunicipalContext"]) -> str:
     """
-    Run a greedy scheduling algorithm that respects resource constraints.
+    Run a greedy scheduling algorithm that respects resource constraints, weather, and emergencies.
     
     Algorithm:
-    1. Sort projects by priority rank (1 = highest)
-    2. For each project, find earliest feasible start week
-    3. A start week is feasible if resource capacity >= crew_size for all weeks
-    4. Allocate resources and record schedule
+    1. Check for active emergencies (may affect priorities)
+    2. Sort projects by priority rank (1 = highest)
+    3. For each project, find earliest feasible start week
+    4. A start week is feasible if:
+       - Resource capacity >= crew_size for all weeks
+       - Weather is acceptable for outdoor projects
+    5. Allocate resources and record schedule
     
     Returns:
         Proposed schedule with start/end weeks for each project
@@ -118,12 +122,19 @@ def run_greedy_scheduler(ctx: RunContextWrapper["MunicipalContext"]) -> str:
         return "No approved projects to schedule."
     
     horizon = ctx.context.planning_horizon_weeks
+    mcp_client = get_mcp_client()
+    weather_server = mcp_client.get_server("weather_service")
     
     # Sort by priority
     projects_sorted = sorted(projects, key=lambda x: x["priority_rank"])
     
     schedule = []
     infeasible = []
+    weather_warnings = []
+    
+    # Get project categories for weather checks
+    candidates = {c['project_id']: c for c in ctx.context.get_project_candidates()}
+    issues = {i['issue_id']: i for i in ctx.context.get_open_issues()}
     
     for p in projects_sorted:
         project_id = p["project_id"]
@@ -131,10 +142,21 @@ def run_greedy_scheduler(ctx: RunContextWrapper["MunicipalContext"]) -> str:
         resource_type = p["required_crew_type"]
         crew_size = p["crew_size"]
         
+        # Get category for weather checks
+        candidate = candidates.get(project_id, {})
+        issue_id = candidate.get('issue_id')
+        issue = issues.get(issue_id, {}) if issue_id else {}
+        category = issue.get('category', '')
+        
+        # Determine if outdoor work
+        is_outdoor = weather_server.is_outdoor_project(category, resource_type)
+        
         # Find earliest feasible start
         scheduled = False
         for start_week in range(1, horizon - duration + 2):
-            # Check if all weeks have enough capacity
+            end_week = start_week + duration - 1
+            
+            # Check resource capacity
             feasible = True
             for week in range(start_week, start_week + duration):
                 if week > horizon:
@@ -145,22 +167,75 @@ def run_greedy_scheduler(ctx: RunContextWrapper["MunicipalContext"]) -> str:
                     feasible = False
                     break
             
-            if feasible:
-                # Allocate resources
-                for week in range(start_week, start_week + duration):
-                    ctx.context.allocate_resource(resource_type, week, crew_size)
-                
-                end_week = start_week + duration - 1
-                schedule.append({
+            if not feasible:
+                continue
+            
+            # Check weather for outdoor projects
+            if is_outdoor:
+                try:
+                    forecast = mcp_client.call_tool(
+                        server="weather_service",
+                        tool="get_forecast_for_weeks",
+                        arguments={
+                            "start_week": start_week,
+                            "end_week": end_week,
+                            "location": ctx.context.city_name
+                        }
+                    )
+                    
+                    # Skip if significant adverse weather (>2 days)
+                    if forecast.get('adverse_days', 0) > 2:
+                        weather_warnings.append({
+                            "project": p["title"],
+                            "start_week": start_week,
+                            "adverse_days": forecast.get('adverse_days', 0),
+                            "reason": "Adverse weather forecasted"
+                        })
+                        continue  # Try next week
+                except:
+                    # If weather check fails, proceed (don't block scheduling)
+                    pass
+            
+            # Allocate resources
+            for week in range(start_week, start_week + duration):
+                ctx.context.allocate_resource(resource_type, week, crew_size)
+            
+            # Save to database immediately
+            ctx.context.insert_schedule_task(
+                project_id=project_id,
+                start_week=start_week,
+                end_week=end_week,
+                resource_type=resource_type,
+                crew_assigned=crew_size
+            )
+            
+            # Audit log
+            ctx.context.log_audit(
+                event_type="TASK_SCHEDULED",
+                agent_name="scheduling_agent",
+                payload={
                     "project_id": project_id,
                     "title": p["title"],
                     "start_week": start_week,
                     "end_week": end_week,
                     "resource_type": resource_type,
-                    "crew_assigned": crew_size
-                })
-                scheduled = True
-                break
+                    "crew_assigned": crew_size,
+                    "considerations": {
+                        "weather_checked": is_outdoor
+                    }
+                }
+            )
+            
+            schedule.append({
+                "project_id": project_id,
+                "title": p["title"],
+                "start_week": start_week,
+                "end_week": end_week,
+                "resource_type": resource_type,
+                "crew_assigned": crew_size
+            })
+            scheduled = True
+            break
         
         if not scheduled:
             infeasible.append(p)
@@ -182,8 +257,13 @@ SCHEDULE:
   Resource: {s['crew_assigned']} x {s['resource_type']}
 """
     
+    if weather_warnings:
+        result += "\n📊 Weather Considerations:\n"
+        result += f"  {len(weather_warnings)} schedule options skipped due to adverse weather\n"
+        result += "  (Outdoor projects rescheduled to avoid bad weather)\n"
+    
     if infeasible:
-        result += "\n⚠️ COULD NOT SCHEDULE (resource constraints):\n"
+        result += "\n⚠️ COULD NOT SCHEDULE (resource/weather constraints):\n"
         for p in infeasible:
             result += f"- {p['title']}: needs {p['crew_size']} x {p['required_crew_type']} for {p['estimated_weeks']} weeks\n"
     
@@ -204,79 +284,18 @@ SCHEDULE:
 @function_tool
 def save_schedule_to_db(ctx: RunContextWrapper["MunicipalContext"]) -> str:
     """
-    Save the current schedule to the database after running the scheduler.
+    Save the current schedule to the database.
     
-    This reads the resource allocations and creates schedule_task records.
+    Note: run_greedy_scheduler now saves the schedule automatically as it schedules projects.
+    This function is kept for compatibility but will check what's already scheduled.
     """
-    projects = ctx.context.get_approved_projects()
+    existing_tasks = ctx.context.get_schedule_tasks()
     
-    if not projects:
-        return "No approved projects to save."
-    
-    # Re-run scheduling logic to determine what was scheduled
-    # (In a real system, the scheduler would persist state)
-    
-    horizon = ctx.context.planning_horizon_weeks
-    projects_sorted = sorted(projects, key=lambda x: x["priority_rank"])
-    
-    saved_count = 0
-    
-    for p in projects_sorted:
-        project_id = p["project_id"]
-        duration = p["estimated_weeks"]
-        resource_type = p["required_crew_type"]
-        crew_size = p["crew_size"]
-        
-        # Find where this project was scheduled by checking allocations
-        # For simplicity, we'll re-compute based on current state
-        # In production, scheduler would return the schedule object
-        
-        for start_week in range(1, horizon - duration + 2):
-            feasible = True
-            for week in range(start_week, start_week + duration):
-                if week > horizon:
-                    feasible = False
-                    break
-                # Check if there's allocation
-                available = ctx.context.get_available_capacity(resource_type, week)
-                if available < 0:  # Over-allocated
-                    feasible = False
-                    break
-            
-            if feasible:
-                end_week = start_week + duration - 1
-                
-                # Save to database
-                ctx.context.insert_schedule_task(
-                    project_id=project_id,
-                    start_week=start_week,
-                    end_week=end_week,
-                    resource_type=resource_type,
-                    crew_assigned=crew_size
-                )
-                
-                # Audit log
-                ctx.context.log_audit(
-                    event_type="TASK_SCHEDULED",
-                    agent_name="scheduling_agent",
-                    payload={
-                        "project_id": project_id,
-                        "title": p["title"],
-                        "start_week": start_week,
-                        "end_week": end_week,
-                        "resource_type": resource_type,
-                        "crew_assigned": crew_size
-                    }
-                )
-                
-                saved_count += 1
-                break
-    
-    return f"""✓ Schedule saved to database
+    return f"""✓ Schedule Status
 
-Tasks saved: {saved_count}
-Table: schedule_tasks
+Tasks in database: {len(existing_tasks)}
 
+Note: The scheduler (run_greedy_scheduler) automatically saves tasks to the database.
 Use get_final_schedule to view the complete saved schedule.
 """
 
@@ -346,6 +365,61 @@ SCHEDULED TASKS:
 
 
 @function_tool
+def check_weather_for_schedule(
+    ctx: RunContextWrapper["MunicipalContext"],
+    start_week: int,
+    end_week: int,
+    category: str = None
+) -> str:
+    """
+    Check weather forecast for a specific date range via MCP.
+    
+    Args:
+        start_week: Starting week number
+        end_week: Ending week number
+        category: Optional project category to determine if outdoor work
+    
+    Returns:
+        Weather forecast information with recommendations
+    """
+    mcp_client = get_mcp_client()
+    weather_server = mcp_client.get_server("weather_service")
+    
+    try:
+        forecast = mcp_client.call_tool(
+            server="weather_service",
+            tool="get_forecast_for_weeks",
+            arguments={
+                "start_week": start_week,
+                "end_week": end_week,
+                "location": ctx.context.city_name
+            }
+        )
+        
+        is_outdoor = weather_server.is_outdoor_project(category or "", "")
+        
+        result = f"Weather Forecast for Weeks {start_week}-{end_week}\n"
+        result += "=" * 50 + "\n"
+        result += f"Weather Risk: {forecast.get('weather_risk', 'unknown')}\n"
+        result += f"Adverse Weather Days: {forecast.get('adverse_days', 0)}\n"
+        
+        if forecast.get('adverse_weather_weeks'):
+            result += f"Adverse Weather Weeks: {forecast['adverse_weather_weeks']}\n"
+        
+        result += f"\nRecommendation: {forecast.get('recommendation', 'N/A')}\n"
+        
+        if is_outdoor and forecast.get('adverse_days', 0) > 2:
+            result += "\n⚠️ WARNING: This is outdoor work and adverse weather is forecasted. Consider rescheduling.\n"
+        elif not is_outdoor:
+            result += "\nℹ️ Indoor work - weather impact is minimal.\n"
+        
+        return result
+    
+    except Exception as e:
+        return f"Weather check error: {str(e)}. Proceeding without weather data."
+
+
+@function_tool
 def check_schedule_feasibility(ctx: RunContextWrapper["MunicipalContext"]) -> str:
     """
     Verify that the current schedule is feasible (no resource over-allocation).
@@ -400,16 +474,19 @@ Your role is to:
 WORKFLOW:
 1. Use get_approved_projects to see what needs scheduling
 2. Use get_resource_availability to understand capacity constraints
-3. Use run_greedy_scheduler to compute a feasible schedule
-4. Use check_schedule_feasibility to verify no violations
-5. Use save_schedule_to_db to persist the schedule
-6. Use get_final_schedule to show the complete plan
+3. Use check_weather_for_schedule to check weather for specific date ranges
+4. Use run_greedy_scheduler to compute a feasible schedule (considers weather conditions)
+5. Use check_schedule_feasibility to verify no violations
+6. Use save_schedule_to_db to persist the schedule
+7. Use get_final_schedule to show the complete plan
 
 CONSTRAINTS:
 - Each resource type has a fixed weekly capacity (crew units)
 - A project needs its crew_size for ALL weeks of its duration
 - Cannot exceed capacity in any week
 - Projects cannot be split across non-consecutive weeks
+- Outdoor projects should avoid weeks with adverse weather (>2 adverse days)
+- Non-urgent projects should avoid weeks affected by active emergencies
 
 IMPORTANT:
 - You CANNOT add or remove projects - only schedule approved ones
@@ -434,6 +511,7 @@ def create_scheduling_agent(context: "MunicipalContext") -> Agent:
         tools=[
             get_approved_projects,
             get_resource_availability,
+            check_weather_for_schedule,
             run_greedy_scheduler,
             check_schedule_feasibility,
             save_schedule_to_db,

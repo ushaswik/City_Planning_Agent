@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import GanttChart from './GanttChart';
 import './App.css';
 
 function App() {
@@ -116,48 +117,55 @@ function App() {
 
               {results.approved_projects && results.approved_projects.length > 0 && (
                 <div className="projects-section">
-                  <h2>Approved Projects Details</h2>
-                  <div className="projects-grid">
-                    {results.approved_projects.map((project) => (
-                      <div key={project.project_id} className="project-card approved">
-                        <div className="project-header">
-                          <h3>{project.title}</h3>
-                          <span className="priority-badge">Priority #{project.display_priority || project.priority_rank}</span>
-                        </div>
-                        <div className="project-details">
-                          <div className="detail-row">
-                            <span className="detail-label">Category:</span>
-                            <span className="detail-value">{project.category || 'N/A'}</span>
+                  <h2>Project Schedule - Gantt Chart</h2>
+                  <GanttChart 
+                    projects={results.approved_projects.filter(p => p.start_week && p.end_week)} 
+                    planningHorizon={12}
+                  />
+                </div>
+              )}
+
+              {/* Weather Summary Card */}
+              {results.approved_projects && results.approved_projects.some(p => p.scheduled && p.is_outdoor) && (
+                <div className="weather-summary-card">
+                  <h2>Weather Considerations</h2>
+                  <div className="weather-projects">
+                    {results.approved_projects
+                      .filter(p => p.scheduled && p.is_outdoor)
+                      .map((project) => (
+                        <div key={project.project_id} className="weather-project-item">
+                          <div className="weather-project-header">
+                            <span className="weather-project-name">{project.title}</span>
+                            {project.weather_info && (
+                              <span className={`weather-badge ${project.weather_info.weather_risk}`}>
+                                {project.weather_info.weather_risk.toUpperCase()}
+                              </span>
+                            )}
                           </div>
-                          <div className="detail-row">
-                            <span className="detail-label">Allocated Budget:</span>
-                            <span className="detail-value highlight">{formatCurrency(project.allocated_budget)}</span>
-                          </div>
-                          <div className="detail-row">
-                            <span className="detail-label">Duration:</span>
-                            <span className="detail-value">{project.estimated_weeks} weeks</span>
-                          </div>
-                          <div className="detail-row">
-                            <span className="detail-label">Crew Type:</span>
-                            <span className="detail-value">{project.required_crew_type.replace('_', ' ')}</span>
-                          </div>
-                          <div className="detail-row">
-                            <span className="detail-label">Crew Size:</span>
-                            <span className="detail-value">{project.crew_size} units</span>
-                          </div>
-                          {project.start_week && (
-                            <div className="detail-row">
-                              <span className="detail-label">Schedule:</span>
-                              <span className="detail-value">Week {project.start_week} - Week {project.end_week}</span>
+                          {project.weather_info && (
+                            <div className="weather-details">
+                              <span>
+                                Scheduled: Week {project.start_week}-{project.end_week}
+                              </span>
+                              <span>
+                                Adverse Days: {project.weather_info.adverse_days}
+                                {project.weather_info.adverse_weather_weeks.length > 0 && (
+                                  ` (Weeks ${project.weather_info.adverse_weather_weeks.join(', ')})`
+                                )}
+                              </span>
                             </div>
                           )}
-                          <div className="detail-row">
-                            <span className="detail-label">Risk Score:</span>
-                            <span className="detail-value">{project.risk_score}</span>
-                          </div>
+                          {project.weather_info && project.weather_info.recommendation && (
+                            <div className="weather-recommendation-text">
+                              {project.weather_info.recommendation}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                  </div>
+                  <div className="weather-note">
+                    ℹ️ Outdoor projects are automatically rescheduled to avoid weeks with 
+                    more than 2 adverse weather days.
                   </div>
                 </div>
               )}

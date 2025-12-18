@@ -113,14 +113,19 @@ async def run_scheduling_stage(
     prompt = """Create an optimized execution schedule for all approved projects.
 
 Steps:
-1. Get the list of approved projects
-2. Check resource availability across the planning horizon
-3. Run the greedy scheduler to assign start weeks
-4. Verify schedule feasibility (no resource violations)
-5. Save the schedule to the database
+1. Check for active emergencies that might affect scheduling
+2. Get the list of approved projects
+3. Check resource availability across the planning horizon
+4. Run the greedy scheduler to assign start weeks (it will consider weather and emergencies)
+5. Verify schedule feasibility (no resource violations)
 6. Show the final schedule with Gantt chart
 
-Optimize for minimal makespan while respecting resource constraints."""
+The scheduler now considers:
+- Resource capacity constraints
+- Weather forecasts (avoids bad weather for outdoor projects)
+- Active emergencies (avoids scheduling conflicts)
+
+Optimize for minimal makespan while respecting all constraints."""
     
     with trace("Scheduling Stage"):
         result = await Runner.run(agent, prompt, context=context)

@@ -193,6 +193,11 @@
   margin-bottom: 1.5rem;
 }
 
+/* Gantt Chart Section */
+.projects-section .gantt-container {
+  margin-top: 0;
+}
+
 .projects-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
@@ -340,6 +345,114 @@
   .project-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+/* Weather Summary Card */
+.weather-summary-card {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin: 1.5rem 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.weather-summary-card h2 {
+  color: #003366;
+  font-size: 1.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.weather-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.weather-project-item {
+  padding: 1rem;
+  margin: 0.5rem 0;
+  background: white;
+  border-radius: 6px;
+  border-left: 4px solid #007bff;
+}
+
+.weather-project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  gap: 1rem;
+}
+
+.weather-project-name {
+  font-weight: 600;
+  color: #003366;
+  font-size: 1rem;
+}
+
+.weather-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+.weather-badge.low {
+  background: #d4edda;
+  color: #155724;
+}
+
+.weather-badge.medium {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.weather-badge.high {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.weather-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.9rem;
+  color: #6c757d;
+  margin-bottom: 0.5rem;
+}
+
+.weather-recommendation-text {
+  font-size: 0.85rem;
+  color: #495057;
+  font-style: italic;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.weather-note {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #e7f3ff;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  color: #004085;
+  border-left: 3px solid #0066cc;
+}
+
+/* Responsive adjustments for weather card */
+@media (max-width: 768px) {
+  .weather-project-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .weather-details {
+    flex-direction: column;
+    gap: 0.5rem;
   }
 }
 

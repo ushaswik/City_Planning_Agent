@@ -39,6 +39,11 @@ def get_detailed_project_info(context: MunicipalContext) -> list:
     # Get issues for additional context
     issues = {issue['issue_id']: issue for issue in context.get_open_issues()}
     
+    # Import MCP client for weather checks
+    from municipal_agents.mcp_servers import get_mcp_client, WeatherServiceMCPServer
+    mcp_client = get_mcp_client()
+    weather_server = mcp_client.get_server("weather_service")
+    
     # Build detailed project list
     projects_formed = []
     for candidate in candidates:
@@ -66,7 +71,9 @@ def get_detailed_project_info(context: MunicipalContext) -> list:
             'rationale': None,
             'start_week': None,
             'end_week': None,
-            'scheduled': False
+            'scheduled': False,
+            'weather_info': None,
+            'is_outdoor': False
         }
         
         if decision:
@@ -80,6 +87,33 @@ def get_detailed_project_info(context: MunicipalContext) -> list:
             project_info['start_week'] = int(task.get('start_week', 0)) if task.get('start_week') else None
             project_info['end_week'] = int(task.get('end_week', 0)) if task.get('end_week') else None
             project_info['scheduled'] = True
+            
+            # Add weather information for scheduled projects
+            category = issue.get('category', '')
+            crew_type = candidate.get('required_crew_type', '')
+            is_outdoor = weather_server.is_outdoor_project(category, crew_type)
+            project_info['is_outdoor'] = is_outdoor
+            
+            if is_outdoor and project_info['start_week'] and project_info['end_week']:
+                try:
+                    forecast = mcp_client.call_tool(
+                        server="weather_service",
+                        tool="get_forecast_for_weeks",
+                        arguments={
+                            "start_week": project_info['start_week'],
+                            "end_week": project_info['end_week'],
+                            "location": context.city_name
+                        }
+                    )
+                    project_info['weather_info'] = {
+                        'adverse_days': forecast.get('adverse_days', 0),
+                        'weather_risk': forecast.get('weather_risk', 'unknown'),
+                        'adverse_weather_weeks': forecast.get('adverse_weather_weeks', []),
+                        'recommendation': forecast.get('recommendation', ''),
+                    }
+                except Exception as e:
+                    # If weather check fails, continue without weather info
+                    pass
         
         projects_formed.append(project_info)
     

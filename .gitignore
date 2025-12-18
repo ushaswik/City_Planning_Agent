@@ -1,6 +1,8 @@
 # Environment
 .env
 .env.local
+api.env
+*.env
 
 # Python
 __pycache__/
